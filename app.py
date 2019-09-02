@@ -1,10 +1,14 @@
 from flask import Flask, request, jsonify, render_template, make_response
 from flask_sqlalchemy import SQLAlchemy, Model
+from sqlalchemy import func
 from golden_marshmallows import GoldenSchema
+import json
+import psycopg2
 
 
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = "postgresql://postgres:123456@localhost/Evaluation"
+connect=psycopg2.connect(database="Evaluation",user='postgres',password='123456',host='localhost',port='5432')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 # Entity
@@ -53,6 +57,7 @@ class User(db.Model):
     Created_date = db.Column(db.String(100))
     Status = db.Column(db.String(100))
     StaffId = db.Column(db.String(100))
+    Role = db.Column(db.String(100))
 
 
 class RegisterCompany(db.Model):
@@ -107,39 +112,212 @@ class EvaluationDetail(db.Model):
 class AssignStaff(db.Model):
     __tablename__="AssignStaff"
     Aid = db.Column(db.Integer,primary_key=True,autoincrement=True)
-    fromDate = db.Column(db.String(100))
-    toDate = db.Column(db.String(100))
     Status = db.Column(db.String(100))
     Description = db.Column(db.String(100))
-    EvID = db.Column(db.Integer,db.ForeignKey('Evaluation.EvId',ondelete='CASCADE',onupdate='CASCADE'),primary_key=True)
+    EvID = db.Column(db.Integer,db.ForeignKey('Evaluation.EvId',ondelete='CASCADE',onupdate='CASCADE'))
     StaffId = db.Column(db.Integer,db.ForeignKey('Staff.StaffId',onupdate='CASCADE',ondelete='CASCADE'))
 
+class AssignScore(db.Model):
+    __tablename__ = "AssignScore"
+    AssignScoreId = db.Column(db.Integer,primary_key=True,autoincrement=True)
+    Date = db.Column(db.String(100))
+    AvgScore = db.Column(db.Integer)
+    ForAssignId = db.Column(db.Integer,db.ForeignKey('AssignStaff.Aid',ondelete='CASCADE',onupdate='CASCADE'))
+    ByAssignId = db.Column(db.Integer,db.ForeignKey('AssignStaff.Aid',ondelete='CASCADE',onupdate='CASCADE'))
+
+class AssignScoreDetail(db.Model):
+    __tablename__ = "AssignScoreDetail"
+    AssignScoreDetailId = db.Column(db.Integer,primary_key=True,autoincrement=True)
+    AssignScoreId = db.Column(db.Integer,db.ForeignKey('AssignScore.AssignScoreId',ondelete='CASCADE',onupdate='CASCADE'))
+    EvQId = db.Column(db.Integer)
+    Score = db.Column(db.Integer)
+#DAO
+class EvaluationDetailDAO():
+    Sname = ""
+    Score = ""
+    Status = ""
 
 #Route
 @app.route('/')
 def Wellcome():
     return "Wellcome to Evaluation Web Service";
 
+#AssignScore
+@app.route('/assignscore/Add',methods=["POST"])
+def assignScoreAdd():
+    json = request.get_json()
+    for o in json:
+        assign = {}
+        assign['Date'] = o['Date']
+        assign['AvgScore'] = o['AvgScore']
+        assign['ForAssignId'] = o['ForAssignId']
+        assign['ByAssignId'] = o['ByAssignId']
+        schema = GoldenSchema(AssignScore)
+        obj = schema.load(assign).data
+        db.session.add(obj)
+        db.session.commit()
+        assignId = obj.AssignScoreId
+        detail = o['ListAssignScoreDetails']
+        detailSchema = GoldenSchema(AssignScoreDetail)
+        for row in detail:
+            row['AssignScoreId']=str(assignId)
+            dObj = detailSchema.load(row).data
+            db.session.add(dObj)
+    db.session.commit()
+    return "Successful"
+
+
+#AssignStaff
+@app.route('/assignstaff/Add',methods=["POST"])
+def assignStaffAdd():
+    json = request.get_json()
+    for o in json:
+        schema = GoldenSchema(AssignStaff);
+        obj = schema.load(o).data
+        db.session.add(obj)
+    db.session.commit()
+    return "Successful"
+
+@app.route('/assignstaff/updateStatusByAid',methods=["POST"])
+def assignStaffUpdateStatus():
+    aid = request.args.get("Aid")
+    sql = r"""UPDATE "AssignStaff" set "Status" = 'InActive' WHERE "Aid" = """+aid
+    cursor = con.cursor()
+    cursor.execute()
+    cursor.commit()
+    return "Successful"
+
+#UserGroup
+@app.route('/usergroup/getAll')
+def UserGroupGetAll():
+    return jsonify(GetAll(Usergroup))
+
+@app.route('/usergroup/Add',methods=["POST"])
+def UserGroupAdd():
+    json = request.get_json()
+    Add(Usergroup,json)
+    return "Successful"
+
+@app.route('/usergroup/deleteById',methods=["DELETE"])
+def UserGroupDeleteById():
+    id = request.args.get("UserGroupID")
+    DeleteById(Usergroup,Usergroup.UserGroupID,id)
+    return "Successful"
+
+#Position
+@app.route('/position/getAll')
+def PositionGetAll():
+    return jsonify(GetAll(Position))
+
+@app.route('/position/deleteById',methods=["DELETE"])
+def PositionDeleteById():
+    id = request.args.get('Pid')
+    DeleteById(Position,Position.Pid,id)
+    return "Successful"
+
+@app.route('/position/Add',methods=["POST"])
+def PositionAdd():
+    json = request.get_json()
+    Add(Position,json)
+    return "Successfull"
+
 #Evaluation
 @app.route('/evaluation/getAll')
 def EvGetAll():
     return jsonify(GetAll(Evaluation))
+
 @app.route('/evaluation/deleteById',methods=["DELETE"])
 def EvDeleteById():
     id = request.args.get('EvId')
     DeleteById(Evaluation,Evaluation.EvId,id)
     return "Successful"
 
-#EvaluationQuestionDetail
-@app.route('/evaluationQuestionDetail/Add',methods=["POST"])
-def EvQDAdd():
+@app.route('/evaluation/Add',methods=["POST"])
+def EvAdd():
     json = request.get_json()
-    Add(EvaluationQuestionDetail, json)
-    return "Successfull"
-@app.route('/evaluationQuestionDetail/getById')
-def EvQDGetById():
-    EvQId = request.args.get('EvQId')
-    return jsonify(GetById(EvaluationQuestionDetail,EvaluationQuestionDetail.EvQId,EvQId))
+    Add(Evaluation,json)
+    id = db.session.query(Evaluation).order_by(Evaluation.EvId.desc()).first()
+    return str(id.EvId)
+
+@app.route('/evaluation/getById')
+def EvGetById():
+    id = request.args.get('EvId')
+    return jsonify(GetById(Evaluation,Evaluation.EvId,id))
+
+@app.route('/evaluation/getByStaffId')
+def EvGetByStaffId():
+    result = {}
+    staffId = request.args.get("StaffId")
+    sql = r"""SELECT "Evaluation"."EvId","EvDescription" from "Evaluation" WHERE "Evaluation"."EvId"=(SELECT MAX("AssignStaff"."EvID") FROM "AssignStaff" WHERE "StaffId"="""+staffId+")"
+    cursor = connect.cursor()
+    cursor.execute(sql)
+    evaId = cursor.fetchone()
+    if(evaId==None):
+        return "[]"
+    evaDescription = str(evaId[1])
+    evStaffSql = r"""SELECT "StaffId","Aid" from "AssignStaff" WHERE "EvID"="""+str(evaId[0])
+    cursor.execute(evStaffSql)
+    evaStaff = cursor.fetchall()
+    listEvStaff = []
+    for row in evaStaff:
+        obj = {}
+        obj['id']=row[0]
+        obj['assignId']=row[1]
+        listEvStaff.append(obj)
+    evAssignId = r"""SELECT "Aid" from "AssignStaff" WHERE "EvID"="""+str(evaId[0])+""" AND "StaffId"="""+str(staffId)
+    cursor.execute(evAssignId)
+    assignId = cursor.fetchone()
+    result['AssignId']=assignId[0]
+    result['EvaDescription'] = evaDescription
+    result['Staff']=listEvStaff
+    evQuestionSql = r"""SELECT "EvaluationQuestion"."EvQId","EvaluationQuestion"."EvQDescription" FROM "EvaluationQuestion" INNER JOIN "EvaluationDetail" ON "EvaluationDetail"."EvQId" = "EvaluationQuestion"."EvQId" WHERE "EvaluationDetail"."EvId"="""+str(evaId[0])
+    cursor.execute(evQuestionSql)
+    evaQuestion = cursor.fetchall()
+    listEvQuestion = []
+    for row in evaQuestion:
+        obj = {}
+        obj['EvQId']=row[0]
+        obj['Description']=row[1]
+        listEvQuestion.append(obj)
+    result['Questions']=listEvQuestion
+    return jsonify(result)
+
+
+#EvaluationDetail
+@app.route("/evaluationDetail/Add",methods=["POST"])
+def EvDAdd():
+    jsonText = request.get_json()
+    for o in jsonText:
+        schema = GoldenSchema(EvaluationDetail);
+        obj = schema.load(o).data
+        db.session.add(obj)
+    db.session.commit()
+    return "Successful"
+
+@app.route('/evaluationDetail/getByEvId')
+def EvDGetByEvId():
+    id = request.args.get('EvId')
+    schema = GoldenSchema(EvaluationQuestion)
+    cursor = connect.cursor()
+    sql='SELECT "Staff"."SName",SUM ("AssignScoreDetail"."Score" ) AS Total FROM "Staff" INNER JOIN "AssignStaff" ON "Staff"."StaffId" = "AssignStaff"."StaffId" LEFT JOIN "AssignScore" ON "AssignScore"."ForAssignId" = "AssignStaff"."Aid" LEFT JOIN "AssignScoreDetail" ON "AssignScoreDetail"."AssignScoreId" = "AssignScore"."AssignScoreId" GROUP BY "Staff"."SName","AssignStaff"."EvID" HAVING "AssignStaff"."EvID"='+id
+    cursor.execute(sql)
+    list =cursor.fetchall()
+    result = []
+    for row in list:
+        obj = {}
+        obj['Sname'] = row[0]
+        obj['Total'] = row[1] or 0
+        result.append(obj)
+    EvQ = db.session.query(EvaluationQuestion).join(EvaluationDetail).filter(EvaluationDetail.EvId == id).all()
+    listEvQ=[]
+    for row in EvQ:
+        listEvQ.append(schema.dump(row).data)
+    biglist = {}
+    biglist['VEvaluationDetailStaff']=result
+    biglist['VEvaluationQuestion']=listEvQ
+    return jsonify(biglist)
+
+
 
 #EvaluationQuestion
 @app.route('/evaluationQuestion/getAll')
@@ -153,10 +331,22 @@ def EvQAdd():
     schema = GoldenSchema(EvaluationQuestion)
     id = db.session.query(EvaluationQuestion).order_by(EvaluationQuestion.EvQId.desc()).first()
     return str(id.EvQId)
+
 @app.route('/evaluationQuestion/deleteById',methods=["DELETE"])
 def EvQDeleteById():
     id = request.args.get('EvQId')
     return jsonify(DeleteById(EvaluationQuestion,EvaluationQuestion.EvQId,id))
+
+#EvaluationQuestionDetail
+@app.route('/evaluationQuestionDetail/Add',methods=["POST"])
+def EvQDAdd():
+    json = request.get_json()
+    Add(EvaluationQuestionDetail, json)
+    return "Successfull"
+@app.route('/evaluationQuestionDetail/getById')
+def EvQDGetById():
+    EvQId = request.args.get('EvQId')
+    return jsonify(GetById(EvaluationQuestionDetail,EvaluationQuestionDetail.EvQId,EvQId))
 
 #EvaluationType
 @app.route('/evaluationType/getAll')
@@ -181,7 +371,8 @@ def DeptGetAll():
 
 @app.route('/department/getById')
 def DeptGetById():
-    return jsonify(GetById(Department,Department.DeptId,1))
+    id = request.args.get('DeptId')
+    return jsonify(GetById(Department,Department.DeptId,id))
 
 @app.route('/department/Add',methods=["POST"])
 def DeptAdd():
@@ -255,8 +446,30 @@ def UserAdd():
     Add(User,json)
     return "Successfull"
 
+@app.route('/user/CheckExist',methods=["POST"])
+def UserCheck():
+    json = request.get_json()
+    schema = GoldenSchema(User);
+    obj = schema.load(json).data
+    if (bool(db.session.query(User).filter(User.Username.like(obj.Username), User.Password.like(obj.Password)).first())):
+        row = db.session.query(User).filter(User.Username.like(obj.Username), User.Password.like(obj.Password)).first()
+        schema = GoldenSchema(User)
+        obj = schema.dump(row).data
+        return jsonify(obj)
+    else:
+        return "Unsuccessfull"
 
-
+#Company
+@app.route('/company/CheckExist')
+def CompanyExist():
+    value = request.args.get('Regcom_name')
+    if (bool(db.session.query(RegisterCompany).filter(RegisterCompany.Regcom_name == value).first())):
+        obj = db.session.query(RegisterCompany).filter(RegisterCompany.Regcom_name == value).first()
+        schema = GoldenSchema(RegisterCompany)
+        obj = schema.dump(obj).data
+        return jsonify(obj)
+    else:
+        return "0"
 
 #RepositoryPattern
 def GetAll(type):
@@ -290,3 +503,4 @@ def Add(type,json):
     obj = schema.load(json).data
     db.session.add(obj)
     db.session.commit()
+
